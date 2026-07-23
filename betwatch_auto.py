@@ -36,24 +36,9 @@ def fetch_html(url):
         return None
 
 def find_friendly_matches():
-    """Ищет матчи на странице лиги Friendly Matches"""
-    # Страница с товарищескими матчами
-    url = "https://betwatch.fr/football/league/12005859"  # ID лиги Friendly Matches
-    html = fetch_html(url)
-    if not html:
-        print("Не удалось загрузить страницу лиги")
-        return []
-    
-    # Ищем ссылки на матчи
-    links = re.findall(r'href="(/football/\d+)"', html)
-    if not links:
-        print("Ссылки на матчи не найдены")
-        return []
-    
-    # Добавляем полный URL
-    friendly_matches = [f"https://betwatch.fr{link}" for link in set(links)]
-    print(f"Найдено {len(friendly_matches)} матчей на странице лиги")
-    return friendly_matches
+    # ВРЕМЕННО: добавляем матч вручную для теста
+    # https://betwatch.fr/football/35850734 - это Venezia — Pesaro
+    return ["https://betwatch.fr/football/35850734"]
 
 def get_match_data(url):
     html = fetch_html(url)
