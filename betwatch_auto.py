@@ -7,24 +7,13 @@ from datetime import datetime
 # ===== НАСТРОЙКИ =====
 TELEGRAM_TOKEN = "8913782012:AAHgCpW3pDvMGVci00IYeaO6U4GCUQ0oPog"
 CHAT_ID = "768631559"
-CHECK_INTERVAL = 30  # секунд
+CHECK_INTERVAL = 30
 
-# ===== ПРАВИЛА =====
 RULES = [
-    # Полный матч (1-й и 2-й таймы)
-    {"markets": ["Over/Under 1.5 Goals", "Over/Under 2.5 Goals", "Over/Under 3.5 Goals"], 
-     "window_minutes": 5, 
-     "threshold": 5000, 
-     "period": "full"},
-    
-    # Только первый тайм (включая прематч!)
-    {"markets": ["First Half Goals 0.5", "First Half Goals 1.5", "First Half Goals 2.5"], 
-     "window_minutes": 4, 
-     "threshold": 5000, 
-     "period": "first_half"}
+    {"markets": ["Over/Under 1.5 Goals", "Over/Under 2.5 Goals", "Over/Under 3.5 Goals"], "window_minutes": 5, "threshold": 5000, "period": "full"},
+    {"markets": ["First Half Goals 0.5", "First Half Goals 1.5", "First Half Goals 2.5"], "window_minutes": 4, "threshold": 5000, "period": "first_half"}
 ]
 
-# Хранилище для отслеживания истории объёмов
 history = {}
 tracked = {}
 
@@ -47,19 +36,24 @@ def fetch_html(url):
         return None
 
 def find_friendly_matches():
-    html = fetch_html("https://betwatch.fr/money")
+    """Ищет матчи на странице лиги Friendly Matches"""
+    # Страница с товарищескими матчами
+    url = "https://betwatch.fr/football/league/12005859"  # ID лиги Friendly Matches
+    html = fetch_html(url)
     if not html:
+        print("Не удалось загрузить страницу лиги")
         return []
+    
+    # Ищем ссылки на матчи
     links = re.findall(r'href="(/football/\d+)"', html)
-    friendly = []
-    for link in set(links):
-        full_url = "https://betwatch.fr" + link
-        match_html = fetch_html(full_url)
-        if match_html and ("Friendly" in match_html or "International" in match_html):
-            friendly.append(full_url)
-            print(f"✅ Найден товарищеский матч: {full_url}")
-        time.sleep(0.5)
-    return friendly
+    if not links:
+        print("Ссылки на матчи не найдены")
+        return []
+    
+    # Добавляем полный URL
+    friendly_matches = [f"https://betwatch.fr{link}" for link in set(links)]
+    print(f"Найдено {len(friendly_matches)} матчей на странице лиги")
+    return friendly_matches
 
 def get_match_data(url):
     html = fetch_html(url)
@@ -93,37 +87,26 @@ def get_match_data(url):
 def check_rules(match_data):
     if not match_data:
         return
-
     minute = match_data.get("minute")
     match_name = match_data["match_name"]
     score = match_data.get("score")
     url = match_data["url"]
     game_data = match_data["game"]
-
     for uuid, market in game_data.get('i', {}).items():
         market_name = market.get('name', '')
         for rule in RULES:
-            # Проверяем, подходит ли рынок по названию
             if any(m in market_name for m in rule["markets"]):
-                # Если рынок только для первого тайма, проверяем время
-                if rule["period"] == "first_half":
-                    # Разрешаем проверку:
-                    # 1) если матч ещё не начался (нет минуты)
-                    # 2) если матч в первом тайме (минута <= 45)
-                    if minute and int(minute) > 45:
-                        continue  # Второй тайм — пропускаем этот рынок
-
+                if rule["period"] == "first_half" and minute and int(minute) > 45:
+                    continue
                 for runner in market.get('runners', []):
                     if runner.get('name') == 'Over':
                         volume = runner.get('volume', 0)
                         odd = runner.get('odd', 0)
                         key = f"{uuid}_{market_name}_Over"
-
                         if key in history:
                             prev = history[key]
                             growth = volume - prev['volume']
                             time_diff = (datetime.now() - prev['time']).total_seconds() / 60
-
                             if growth >= rule["threshold"] and time_diff <= rule["window_minutes"]:
                                 match_info = f"{match_name}"
                                 score_info = f"{score or ''} {minute or ''}'" if minute else "До начала матча (прематч)"
@@ -137,7 +120,6 @@ def check_rules(match_data):
                                     f"{url}"
                                 )
                                 send_telegram(msg)
-                                # Обновляем последний зафиксированный объём, чтобы не дублировать
                                 history[key]['volume'] = volume
                                 history[key]['time'] = datetime.now()
                         else:
