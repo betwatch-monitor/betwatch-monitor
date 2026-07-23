@@ -1,5 +1,4 @@
 import requests
-import re
 import json
 import time
 from datetime import datetime
@@ -26,59 +25,60 @@ def send_telegram(message):
     except Exception as e:
         print(f"Ошибка отправки в Telegram: {e}")
 
-def fetch_html(url):
+def fetch_match_data(match_id):
+    """Получает данные матча через API Betwatch"""
+    url = f"https://betwatch.fr/api/football/match/{match_id}"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
     }
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        print(f"   → Статус: {response.status_code}")
-        return response.text if response.status_code == 200 else None
+        print(f"   → API статус: {response.status_code}")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"   → Ошибка API: {response.status_code}")
+            return None
     except Exception as e:
-        print(f"Ошибка загрузки {url}: {e}")
+        print(f"Ошибка API: {e}")
         return None
 
 def find_friendly_matches():
-    # ВРЕМЕННО: добавляем матч вручную для теста
-    return ["https://betwatch.fr/football/35850734"]
+    # ВРЕМЕННО: добавляем ID матча вручную для теста
+    return ["35850734"]  # Venezia — Pesaro
 
-def get_match_data(url):
-    html = fetch_html(url)
-    if not html:
+def get_match_data(match_id):
+    data = fetch_match_data(match_id)
+    if not data:
         return None
-    game_match = re.search(r'game = ({.*?});', html, re.DOTALL)
-    if not game_match:
-        return None
-    game_data = json.loads(game_match.group(1))
-    title_match = re.search(r'<title>(.*?)</title>', html, re.DOTALL)
-    match_name = title_match.group(1).strip() if title_match else "Unknown Match"
-    is_live = game_data.get('l', False)
-    live_info = game_data.get('live_info', {})
-    minute = None
-    score = None
-    if live_info:
-        for info in live_info.values():
-            if len(info) >= 2:
-                minute = info[0]
-                score = info[1]
-                break
+    
+    # Парсим ответ API
+    match_name = f"{data.get('home_team', '')} — {data.get('away_team', '')}"
+    is_live = data.get('live', False)
+    minute = data.get('minute', None)
+    score = f"{data.get('home_score', 0)}:{data.get('away_score', 0)}"
+    
+    # Преобразуем рынки в формат, совместимый со скриптом
+    game_data = {'i': {}}
+    for market in data.get('markets', []):
+        market_id = f"market_{market.get('id', '')}"
+        game_data['i'][market_id] = {
+            'name': market.get('name', ''),
+            'total_volume': market.get('total_volume', 0),
+            'runners': [
+                {'name': runner.get('name', ''), 'volume': runner.get('volume', 0), 'odd': runner.get('odd', '0')}
+                for runner in market.get('runners', [])
+            ]
+        }
+    
     return {
         "match_name": match_name,
         "is_live": is_live,
         "minute": minute,
         "score": score,
         "game": game_data,
-        "url": url
+        "url": f"https://betwatch.fr/football/{match_id}"
     }
 
 def check_rules(match_data):
@@ -128,11 +128,11 @@ def main():
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Проверка...")
         matches = find_friendly_matches()
         if matches:
-            for url in matches:
-                if url not in tracked:
-                    tracked[url] = datetime.now()
-                    print(f"Добавлен матч: {url}")
-                data = get_match_data(url)
+            for match_id in matches:
+                if match_id not in tracked:
+                    tracked[match_id] = datetime.now()
+                    print(f"Добавлен матч: {match_id}")
+                data = get_match_data(match_id)
                 if data:
                     check_rules(data)
         else:
