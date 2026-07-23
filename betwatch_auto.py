@@ -1,4 +1,5 @@
 import requests
+import re
 import json
 import time
 from datetime import datetime
@@ -7,6 +8,10 @@ from datetime import datetime
 TELEGRAM_TOKEN = "8913782012:AAHgCpW3pDvMGVci00IYeaO6U4GCUQ0oPog"
 CHAT_ID = "768631559"
 CHECK_INTERVAL = 30
+
+# ===== API КЛЮЧ ScrapingBee (БЕСПЛАТНО) =====
+# Зарегистрируйся на https://www.scrapingbee.com/ и получи ключ
+SCRAPINGBEE_API_KEY = "ТВОЙ_КЛЮЧ_SCRAPINGBEE"  # Замени на свой
 
 RULES = [
     {"markets": ["Over/Under 1.5 Goals", "Over/Under 2.5 Goals", "Over/Under 3.5 Goals"], "window_minutes": 5, "threshold": 5000, "period": "full"},
@@ -25,60 +30,55 @@ def send_telegram(message):
     except Exception as e:
         print(f"Ошибка отправки в Telegram: {e}")
 
-def fetch_match_data(match_id):
-    """Получает данные матча через API Betwatch"""
-    url = f"https://betwatch.fr/api/football/match/{match_id}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-    }
+def fetch_html_via_scrapingbee(url):
+    """Получает HTML через ScrapingBee (обходит блокировку)"""
+    api_url = f"https://app.scrapingbee.com/api/v1/?api_key={SCRAPINGBEE_API_KEY}&url={url}&render_js=false"
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        print(f"   → API статус: {response.status_code}")
+        response = requests.get(api_url, timeout=30)
+        print(f"   → ScrapingBee статус: {response.status_code}")
         if response.status_code == 200:
-            return response.json()
+            return response.text
         else:
-            print(f"   → Ошибка API: {response.status_code}")
+            print(f"   → Ошибка ScrapingBee: {response.status_code}")
             return None
     except Exception as e:
-        print(f"Ошибка API: {e}")
+        print(f"Ошибка ScrapingBee: {e}")
         return None
 
 def find_friendly_matches():
-    # ВРЕМЕННО: добавляем ID матча вручную для теста
-    return ["35850734"]  # Venezia — Pesaro
+    # ВРЕМЕННО: добавляем матч вручную для теста
+    return ["https://betwatch.fr/football/35850734"]
 
-def get_match_data(match_id):
-    data = fetch_match_data(match_id)
-    if not data:
+def get_match_data(url):
+    html = fetch_html_via_scrapingbee(url)
+    if not html:
         return None
     
-    # Парсим ответ API
-    match_name = f"{data.get('home_team', '')} — {data.get('away_team', '')}"
-    is_live = data.get('live', False)
-    minute = data.get('minute', None)
-    score = f"{data.get('home_score', 0)}:{data.get('away_score', 0)}"
+    game_match = re.search(r'game = ({.*?});', html, re.DOTALL)
+    if not game_match:
+        print("   → game JSON не найден")
+        return None
     
-    # Преобразуем рынки в формат, совместимый со скриптом
-    game_data = {'i': {}}
-    for market in data.get('markets', []):
-        market_id = f"market_{market.get('id', '')}"
-        game_data['i'][market_id] = {
-            'name': market.get('name', ''),
-            'total_volume': market.get('total_volume', 0),
-            'runners': [
-                {'name': runner.get('name', ''), 'volume': runner.get('volume', 0), 'odd': runner.get('odd', '0')}
-                for runner in market.get('runners', [])
-            ]
-        }
-    
+    game_data = json.loads(game_match.group(1))
+    title_match = re.search(r'<title>(.*?)</title>', html, re.DOTALL)
+    match_name = title_match.group(1).strip() if title_match else "Unknown Match"
+    is_live = game_data.get('l', False)
+    live_info = game_data.get('live_info', {})
+    minute = None
+    score = None
+    if live_info:
+        for info in live_info.values():
+            if len(info) >= 2:
+                minute = info[0]
+                score = info[1]
+                break
     return {
         "match_name": match_name,
         "is_live": is_live,
         "minute": minute,
         "score": score,
         "game": game_data,
-        "url": f"https://betwatch.fr/football/{match_id}"
+        "url": url
     }
 
 def check_rules(match_data):
@@ -128,11 +128,11 @@ def main():
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Проверка...")
         matches = find_friendly_matches()
         if matches:
-            for match_id in matches:
-                if match_id not in tracked:
-                    tracked[match_id] = datetime.now()
-                    print(f"Добавлен матч: {match_id}")
-                data = get_match_data(match_id)
+            for url in matches:
+                if url not in tracked:
+                    tracked[url] = datetime.now()
+                    print(f"Добавлен матч: {url}")
+                data = get_match_data(url)
                 if data:
                     check_rules(data)
         else:
