@@ -9,11 +9,22 @@ TELEGRAM_TOKEN = "8913782012:AAHgCpW3pDvMGVci00IYeaO6U4GCUQ0oPog"
 CHAT_ID = "768631559"
 CHECK_INTERVAL = 30  # секунд
 
+# ===== ПРАВИЛА =====
 RULES = [
-    {"markets": ["Over/Under 3.5 Goals", "Over/Under 2.5 Goals", "Over/Under 1.5 Goals"], "window_minutes": 5, "threshold": 5000},
-    {"markets": ["Over/Under 0.5 Goals", "Over/Under 1.5 Goals", "Over/Under 2.5 Goals"], "window_minutes": 4, "threshold": 5000}
+    # Полный матч (1-й и 2-й таймы)
+    {"markets": ["Over/Under 1.5 Goals", "Over/Under 2.5 Goals", "Over/Under 3.5 Goals"], 
+     "window_minutes": 5, 
+     "threshold": 5000, 
+     "period": "full"},
+    
+    # Только первый тайм (включая прематч!)
+    {"markets": ["First Half Goals 0.5", "First Half Goals 1.5", "First Half Goals 2.5"], 
+     "window_minutes": 4, 
+     "threshold": 5000, 
+     "period": "first_half"}
 ]
 
+# Хранилище для отслеживания истории объёмов
 history = {}
 tracked = {}
 
@@ -64,7 +75,7 @@ def get_match_data(url):
     live_info = game_data.get('live_info', {})
     minute = None
     score = None
-    if is_live and live_info:
+    if live_info:
         for info in live_info.values():
             if len(info) >= 2:
                 minute = info[0]
@@ -80,39 +91,53 @@ def get_match_data(url):
     }
 
 def check_rules(match_data):
-    if not match_data or not match_data["is_live"]:
+    if not match_data:
         return
-    minute = match_data["minute"]
-    if minute and int(minute) > 45:
-        return
-    game_data = match_data["game"]
+
+    minute = match_data.get("minute")
     match_name = match_data["match_name"]
-    score = match_data["score"]
+    score = match_data.get("score")
     url = match_data["url"]
+    game_data = match_data["game"]
+
     for uuid, market in game_data.get('i', {}).items():
         market_name = market.get('name', '')
         for rule in RULES:
+            # Проверяем, подходит ли рынок по названию
             if any(m in market_name for m in rule["markets"]):
+                # Если рынок только для первого тайма, проверяем время
+                if rule["period"] == "first_half":
+                    # Разрешаем проверку:
+                    # 1) если матч ещё не начался (нет минуты)
+                    # 2) если матч в первом тайме (минута <= 45)
+                    if minute and int(minute) > 45:
+                        continue  # Второй тайм — пропускаем этот рынок
+
                 for runner in market.get('runners', []):
                     if runner.get('name') == 'Over':
                         volume = runner.get('volume', 0)
                         odd = runner.get('odd', 0)
                         key = f"{uuid}_{market_name}_Over"
+
                         if key in history:
                             prev = history[key]
                             growth = volume - prev['volume']
                             time_diff = (datetime.now() - prev['time']).total_seconds() / 60
+
                             if growth >= rule["threshold"] and time_diff <= rule["window_minutes"]:
+                                match_info = f"{match_name}"
+                                score_info = f"{score or ''} {minute or ''}'" if minute else "До начала матча (прематч)"
                                 msg = (
                                     f"🔥 <b>СИГНАЛ!</b>\n"
-                                    f"{match_name}\n"
-                                    f"{score or ''} {minute or ''}'\n"
+                                    f"{match_info}\n"
+                                    f"{score_info}\n"
                                     f"Рынок: {market_name}\n"
                                     f"Over: +{growth} € (за {time_diff:.1f} мин)\n"
                                     f"Объём: {volume} € | Кэф: {odd}\n"
                                     f"{url}"
                                 )
                                 send_telegram(msg)
+                                # Обновляем последний зафиксированный объём, чтобы не дублировать
                                 history[key]['volume'] = volume
                                 history[key]['time'] = datetime.now()
                         else:
@@ -138,4 +163,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
